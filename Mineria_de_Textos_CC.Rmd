@@ -1,0 +1,277 @@
+---
+title: "Análisis de Discursos Inaugurales"
+author: "Carolina Cornacchia"
+date: "2025-09-12"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    toc: true             # Activa la tabla de contenidos
+    toc_depth: 4
+    highlight: github
+---
+
+# Introducción✨ 
+
+## ¿Qué es la Minería de Textos?
+
+La **Minería de Textos** es una técnica que permite extraer información significativa desde grandes volúmenes de datos textuales. A través de procesos como la *tokenización*, el *análisis de frecuencia*, la *detección de sentimientos* y el *modelado de temas*, es posible transformar lenguaje natural en estructuras cuantificables que revelan patrones, tendencias y relaciones ocultas.
+
+## Objetivos del análisis
+
+En esta oportunidad, aplicaré la **Minería de textos** para analizar un corpus muy particular: los discursos inaugurales de presidentes de los Estados Unidos. Este conjunto de documentos, cargado de contenido político, histórico y retórico, ofrece una excelente base para explorar cómo varía el lenguaje presidencial a lo largo del tiempo, qué temas predominan en distintos períodos, y cómo se expresa el tono emocional en momentos clave de la historia.
+
+# Paso 1: Descargar las librerías correspondientes
+A lo largo del análisis, utilizaremos herramientas del ecosistema R como `quanteda`, `tidytext`, `tidyverse`, `wordcloud`, entre otras, para realizar:
+
+Limpieza y tokenización del corpus📄 
+
+Análisis de frecuencia y relevancia de palabras (TF-IDF)🗣️
+
+Visualización mediante nubes de palabras☁️
+
+Evaluación del sentimiento por año😐
+
+Modelado de temas con LDA🧮
+
+Exportación de resultados para futuras exploraciones📎
+
+Este documento busca no solo aplicar técnicas de procesamiento de lenguaje natural, sino también comunicar los resultados de forma clara y visualmente atractiva, combinando rigor técnico con diseño narrativo.
+
+```{r, message=FALSE, warning=FALSE}
+# install.packages(c("quanteda", "tidyverse", "tidytext", "wordcloud", "ggplot2", "topicmodels", "textdata"))
+library(quanteda)     # corpus y herramientas rápidas para texto
+library(tidyverse)    # dplyr, ggplot2, tibble, etc.
+library(tidytext)     # flujo "tidy" para texto: unnest_tokens, bind_tf_idf, cast_dtm
+library(wordcloud)    # nube de palabras
+library(topicmodels)  # LDA
+library(textdata)     # para lexicones adicionales si los necesitás
+```
+
+# Paso 2:Cargar los discursos correspondientes
+
+La información utilizada a analizar en este trabajo es
+`data_corpus_inaugural` que es un corpus que provee el paquete quanteda con los discursos inaugurales de EE. UU.
+
+```{r, message=FALSE, warning=FALSE}
+data_corpus_inaugural    # Discursos inaugurales de presidentes de EE.UU
+ndoc(data_corpus_inaugural)
+docvars(data_corpus_inaugural)
+```
+
+Como podemos ver gracias a las funciones ndoc y docvars, se trata de 60 discursos con cuatro variables: Presidente; Año; Primer Nombre y Partido.
+
+Finalmente, organizo los datos en un Data Frame para su posterior utilización:
+
+```{r, message=FALSE, warning=FALSE}
+df_speeches <- data.frame(   #Convertirlo en Dataframe
+  text = as.character(data_corpus_inaugural),                    # texto completo del discurso
+  president = docvars(data_corpus_inaugural, "President"),       # nombre del presidente
+  year = as.integer(docvars(data_corpus_inaugural, "Year")),     # año (convertido a integer)
+  stringsAsFactors = FALSE
+)
+```
+
+# Paso 3: Tokenización del texto🔤
+
+Una vez cargado y estructurado el corpus de discursos inaugurales, el primer paso del procesamiento textual es la `tokenización`. Este proceso consiste en dividir cada documento en sus unidades mínimas de análisis: **las palabras**.
+
+En este caso, utilizamos la función *unnest_tokens()* del paquete `tidytext`, que transforma cada discurso en una serie de filas, donde cada fila representa una palabra individual. Esta función también convierte el texto a minúsculas y elimina automáticamente la puntuación, lo que facilita el análisis posterior.
+
+La tokenización nos permite pasar de un conjunto de discursos completos a una estructura más manejable y cuantificable, donde podemos contar palabras, analizar su frecuencia, calcular métricas como TF-IDF, y aplicar modelos de sentimiento o de tópicos.
+
+Se realiza de la siguiente forma: 
+
+```{r, message=FALSE, warning=FALSE}
+tokens <- df_speeches %>%
+  mutate(doc_id = paste0(president, "_", year)) %>% # ID único por discurso
+  select(doc_id, president, year, text) %>%
+  unnest_tokens(word, text)                         
+
+```
+
+#Paso 4: 🧼 Eliminación de palabras vacías (stopwords)
+
+Una vez que el corpus ha sido tokenizado, el siguiente paso esencial en la minería de textos es la **eliminación de palabras vacías**, conocidas como `stopwords`. Estas son palabras muy frecuentes en el idioma —como “el”, “la”, “de”, “y”, “que”— que suelen tener poco valor semántico en los análisis cuantitativos, ya que no aportan información relevante sobre el contenido o el tono del texto.
+
+En este análisis, utilizé el conjunto de stopwords provisto por el paquete `tidytext`, que incluye una lista curada de términos comunes en inglés. Al aplicar un filtro con *anti_join()*, eliminamos estas palabras del corpus tokenizado, conservando únicamente aquellas que pueden aportar significado, contexto o diferenciación entre discursos.
+
+```{r, message=FALSE, warning=FALSE}
+
+data("stop_words") # tibble con stopwords (tidytext)
+tokens_clean <- tokens %>%
+  anti_join(stop_words, by = "word")    # remueve las stopwords
+```
+
+# Paso 4: Buscar las palabras más frecuentes en los discursos📊
+
+Una vez que el corpus ha sido tokenizado y limpiado de palabras vacías, podemos comenzar a explorar el contenido lingüístico de los discursos inaugurales. El primer análisis que realizamos es el de **frecuencia de palabras**, que nos permite identificar los términos más utilizados por los presidentes a lo largo del tiempo.
+
+Este tipo de análisis revela patrones retóricos, temáticos y estilísticos que se repiten en el lenguaje político. Por ejemplo, palabras como freedom, nation, people o government suelen aparecer con alta frecuencia, reflejando los valores y preocupaciones centrales del discurso presidencial.
+
+El código para reflejar este análisis es:
+
+```{r, message=FALSE, warning=FALSE}
+top_words_global <- tokens_clean %>%
+  count(word, sort = TRUE) %>%
+  slice_max(n, n = 30)   # top 30
+top_words_global
+```
+
+Estos resultados reflejan una fuerte presencia de términos vinculados al *Estado*, la *sociedad* y el *contexto internacional*. La palabra más frecuente, **government (Gobierno)**, sugiere que los discursos inaugurales tienden a centrarse en el rol institucional del poder ejecutivo, sus responsabilidades y su relación con el pueblo.
+
+La segunda palabra más común, **people (Personas)**, destaca la dimensión ciudadana del discurso, reforzando la idea de que el presidente se dirige directamente a la población como sujeto activo del sistema democrático. Este énfasis en el pueblo se complementa con términos como *citizens*, *public* y *nation*, que refuerzan la identidad colectiva y el sentido de pertenencia.
+
+Por otro lado, la aparición de **world (Mundo)** y peace indica que los discursos no se limitan al plano interno, sino que también abordan temas de política exterior, estabilidad global y cooperación internacional. La presencia de power sugiere una reflexión sobre el ejercicio del liderazgo, mientras que time puede estar asociada a la noción de cambio, continuidad o urgencia en la acción gubernamental.
+
+En conjunto, estas palabras configuran un vocabulario que combina institucionalidad, ciudadanía, contexto global y valores aspiracionales. El análisis de frecuencia, aunque descriptivo, permite identificar los pilares retóricos sobre los que se construyen los discursos inaugurales y anticipa los temas que serán explorados en mayor profundidad mediante técnicas como TF-IDF y modelado de tópicos.
+
+## Comparación entre discursos🧾
+
+Una forma muy interesante para utilizar estas funciones es la comparación de discursos entre candidatos de partidos politicos opuestos. Por ejemplo, podes comparar cuáles son las palabras más utilizadas por Trump y Obama de la siguiente manera: 
+
+```{r, warning=FALSE}
+
+top_by_pres <- tokens_clean %>%
+  filter(president %in% c("Obama", "Trump")) %>%
+  count(president, word, sort = TRUE) %>%
+  group_by(president) %>%
+  slice_max(n, n = 10)   
+as.data.frame(top_by_pres)
+```
+
+### 🗣️ Comparación de vocabulario entre Obama y Trump
+El análisis de frecuencia por presidente permite observar cómo varía el lenguaje utilizado en los discursos inaugurales, revelando diferencias en estilo, enfoque temático y construcción retórica. A continuación, se presentan las palabras más frecuentes en los discursos de Barack Obama y Donald Trump:
+
+📌 **Barack Obama**
+Las palabras más repetidas por Obama incluyen *nation*, *people*, *time*, *america*, *freedom*, *generation*, *god*, *journey* y *world*. Este conjunto refleja un discurso centrado en:
+
+- Unidad nacional (nation, people)
+
+- Temporalidad y cambio (time, generation)
+
+- Valores compartidos (freedom, common, god)
+
+- Narrativa de progreso (journey, world)
+
+Obama construye un discurso con fuerte carga simbólica, apelando a ideales colectivos y a una visión de futuro compartido. El uso de journey y generation sugiere una narrativa de continuidad histórica, mientras que freedom y god refuerzan valores fundacionales.
+
+📌 **Donald Trump**
+Las palabras más frecuentes en el discurso de Trump incluyen *america*, *nation*, *american*, *country*, *government*, *president*, *citizens*, *americans*, *bring*, *day* y *united*. Este vocabulario refleja un enfoque más institucional y territorial:
+
+- Identidad nacional (america, american, americans)
+
+- Gobierno y liderazgo (government, president)
+
+- Ciudadanía y acción (citizens, bring, day)
+
+- Unidad territorial (country, united)
+
+Trump enfatiza la noción de país como entidad geopolítica y cultural, con un lenguaje que refuerza la soberanía, el liderazgo ejecutivo y la acción inmediata. El uso repetido de america y sus derivados sugiere una construcción discursiva centrada en la identidad nacional como eje principal.
+
+### 🔍 Reflexión comparativa
+Ambos presidentes comparten términos como nation, people y world, lo que indica una base común en el discurso presidencial. Sin embargo, mientras Obama tiende a construir una narrativa **emocional y aspiracional**, Trump se enfoca en una retórica más **directa, institucional y centrada en la identidad nacional**.
+
+Este contraste no solo refleja diferencias personales, sino también contextos históricos, prioridades políticas y estilos comunicativos.
+
+# 📐Paso5: Relevancia de términos con TF–IDF
+Luego de analizar la frecuencia absoluta de palabras en los discursos inaugurales, es importante incorporar una métrica que nos permita identificar términos relevantes y distintivos en cada discurso individual. Para ello utilizamos el índice **TF–IDF** (Term Frequency–Inverse Document Frequency), una técnica ampliamente utilizada en minería de textos.
+
+El TF–IDF combina dos componentes:
+
+- *TF (Term Frequency)*: mide cuántas veces aparece una palabra en un documento específico.
+
+- *IDF (Inverse Document Frequency)*: penaliza las palabras que aparecen en muchos documentos, destacando aquellas que son más exclusivas de un texto en particular.
+
+Esta métrica permite resaltar palabras que no solo son frecuentes, sino también características de un discurso determinado. Por ejemplo, si la palabra freedom aparece muchas veces en el discurso de un presidente pero no en los demás, su TF–IDF será alto, indicando que es un término distintivo de ese texto.
+
+En este análisis, aplicamos TF–IDF para comparar los discursos de distintos presidentes y detectar qué palabras definen el estilo, el enfoque temático o el contexto histórico de cada uno. A diferencia del análisis de frecuencia global, TF–IDF nos ayuda a descubrir el vocabulario único que cada mandatario eligió para construir su mensaje inaugural.
+
+```{r}
+tfidf <- tokens_clean %>%
+  count(doc_id, word, sort = TRUE) %>%
+  bind_tf_idf(word, doc_id, n) %>%
+  group_by(doc_id) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup()
+
+```
+
+```{r, echo = FALSE}
+tfidf <- tokens_clean %>%
+  count(doc_id, word, sort = TRUE) %>%
+  bind_tf_idf(word, doc_id, n) %>%
+  group_by(doc_id) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup()
+```
+
+Para poder ver las palabras mas utilizadas en cada discurso, utilizamos el siguiente código: 
+
+```{r mostrar-tfidf, echo = FALSE}
+print(tfidf, n = Inf, width = Inf)
+
+```
+
+# Paso 6: Nube de palabras☁️
+
+Para complementar el análisis cuantitativo, se generó una **nube de palabras** que representa visualmente los términos más frecuentes en el corpus de discursos inaugurales. Esta técnica permite identificar rápidamente los conceptos más repetidos, ya que el tamaño de cada palabra en la nube es proporcional a su frecuencia o relevancia.
+
+En este caso, se utilizó la frecuencia absoluta de cada término para construir la nube, excluyendo previamente las stopwords y otros elementos no informativos. El resultado muestra un predominio de palabras como *government*, *people*, *nation*, *country* y *world*, lo que confirma la centralidad de temas institucionales, ciudadanos y geopolíticos en el discurso presidencial.
+
+```{r}
+library(wordcloud2)
+
+wordcloud2(data = top_words_global, size = 1.2, color = "random-light", backgroundColor = "black")
+
+```
+
+
+# Paso 7: Analisis de Sentimientos🔍
+
+El análisis de sentimiento permite explorar la carga emocional del lenguaje utilizado en los discursos presidenciales. A través de esta técnica, se asigna una puntuación positiva o negativa a cada palabra del corpus, utilizando diccionarios léxicos previamente definidos, como el lexicón *bing* o *AFINN*. Esto permite estimar si el tono general de un discurso tiende hacia lo optimista, lo crítico, lo neutral o lo ambivalente.
+
+En este estudio, se aplicó el lexicón bing, que clasifica las palabras como positivas o negativas. Luego de tokenizar y limpiar el texto, se cruzaron los términos con el diccionario y se contabilizó la cantidad de palabras positivas y negativas por discurso. Esta información se visualizó mediante gráficos de barras y líneas, permitiendo comparar el tono emocional entre presidentes y a lo largo del tiempo.
+
+```{r, warning=FALSE}
+bing <- get_sentiments("bing")  
+sentiments_by_year <- tokens_clean %>%
+  inner_join(bing, by = "word") %>%   # conserva solo palabras que aparecen en 'bing'
+  count(year, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>%
+  mutate(net = positive - negative)   # neto por año
+bing
+```
+
+Los resultados muestran que, si bien todos los discursos contienen una mezcla de términos positivos y negativos, algunos mandatarios tienden a enfatizar valores como *freedom, hope, unity y progress*, mientras que otros incorporan términos como *crisis, threat, violence o failure*, reflejando contextos históricos distintos o estilos retóricos más confrontativos.
+
+Este tipo de análisis no solo aporta una dimensión emocional al estudio del lenguaje político, sino que también permite detectar patrones discursivos, estrategias persuasivas y diferencias en la construcción del liderazgo. En conjunto con otras técnicas como TF–IDF y modelado de tópicos, el análisis de sentimiento contribuye a una comprensión más profunda del discurso presidencial.
+
+# Paso 8: Grafico de Evolución de Sentimientos🧪
+
+Por último diseñé un gráfico que muestra la *evolución del sentimiento neto en los discursos inaugurales presidenciales de Estados Unidos*, calculado como la diferencia entre palabras positivas y negativas según el lexicón `bing`. Cada punto representa un discurso, y la línea conecta los valores a lo largo del tiempo, desde 1789 hasta el presente.
+
+Este análisis permite observar cómo varía el tono emocional del lenguaje presidencial en función del contexto histórico, el estilo del mandatario y las circunstancias del país. Se destacan períodos con discursos marcadamente positivos, como aquellos que celebran logros nacionales o proyectan esperanza, y otros con tono más crítico o sombrío, especialmente en momentos de crisis o transición.
+
+```{r}
+sentiments_by_year %>%
+  ggplot(aes(x = year, y = net)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Sentimiento neto en discursos inaugurales (bing)",
+       x = "Año", y = "Positives - Negatives")
+```
+
+El gráfico revela que, si bien la mayoría de los discursos tienden a mantener un tono positivo, *hay fluctuaciones significativas que reflejan el estado de ánimo nacional*. Por ejemplo, discursos pronunciados en contextos de guerra, recesión o polarización política suelen mostrar un menor sentimiento neto, mientras que aquellos en tiempos de estabilidad o renovación suelen elevar el tono emocional.
+
+Este tipo de visualización aporta una dimensión temporal al análisis de sentimiento, permitiendo no solo comparar presidentes, sino también entender cómo el lenguaje político responde a las demandas emocionales de cada época.
+
+# 📌Conclusiones finales: El tono emocional como reflejo del liderazgo
+
+El análisis de sentimiento, junto con las métricas de frecuencia y TF–IDF, revela que el lenguaje presidencial no solo transmite información, sino que también *construye una narrativa emocional que refleja el contexto histórico, las prioridades políticas y el estilo personal de cada mandatario.*
+
+El gráfico de evolución del sentimiento neto muestra cómo los discursos inaugurales oscilan entre tonos esperanzadores y momentos de mayor tensión, evidenciando que **el lenguaje político responde a las demandas emocionales de cada época**. Mientras algunos presidentes apelan a valores como unidad, esperanza y progreso, otros enfatizan desafíos como crisis, conflicto o urgencia.
+
+Estas fluctuaciones no son meramente estilísticas: **configuran la percepción pública del liderazgo, influyen en la recepción del mensaje y marcan el inicio simbólico de cada mandato**. Al integrar el análisis de sentimiento con técnicas como TF–IDF y visualizaciones como la nube de palabras, se logra una comprensión más rica y matizada del discurso presidencial como herramienta de comunicación estratégica.
+
+
+# Muchas gracias!!! 🌈
