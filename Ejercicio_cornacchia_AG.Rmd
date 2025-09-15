@@ -1,0 +1,79 @@
+---
+title: "Algoritmos Geneticos: Sensores en casas"
+author: "Carolina Cornacchia"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  prettydoc::html_pretty:
+    theme: leonids
+    highlight: espresso
+    toc: true
+    toc_depth: 3
+---
+
+
+```{r}
+#Voy a tratar de hacer un proyecto de algoritmos geneticos que me permitan ver como ubico unos sensores dependiendo de la ubicación de las casas
+library(GA)
+
+set.seed(2)
+x <- runif(n= 20,min= 0,max= 10)
+y <- runif(n= 20,min= 0,max= 10)
+data_project <- matrix(data=c(x,y), ncol=2, nrow=20, byrow=F)
+num<-1:20
+data_project
+```
+```{r}
+#Grafico de los puntos anteriores
+plot(x,y, pch="", main= "Ubicación de las casas")
+text(x,y, labels= num[1:20])
+lines(x,y, col="blue" )
+```
+```{r}
+D<- as.matrix(dist(data_project))
+D
+```
+```{r}
+#Trayectoria
+trayectoria <- function(recorrido, D) {
+  recorrido <- c(recorrido, recorrido[1])
+  ruta <- embed(recorrido, 2)[, 2:1]
+  sum(D[ruta])
+}
+recorrido<-sample(1:20)
+trayectoria(recorrido,D)
+```
+```{r}
+#calculo el fitness del recorrido
+fitness <- function(recorrido) {
+  1/ trayectoria(recorrido, D)
+}
+
+fitness(recorrido)
+```
+```{r}
+#Ejecuto el algoritmo genético para buscar el mejor fitness de todos los recorridos
+
+ga_result <- ga(
+  type = "permutation",
+  fitness = fitness,
+  lower = 1,
+  upper = 20,
+  popSize = 100,
+  maxiter = 200,
+  run = 50,
+  pmutation = 0.2
+)
+
+```
+```{r}
+mejor <-ga_result@solution[1,]
+cat("El mejor recorrido para las casas es de:", mejor, "\n")
+
+```
+```{r}
+#Visualizo lo que acabé de hacer
+plot(x, y, pch = 19, col = "darkgreen", main = "Recorrido optimo")
+text(x, y, labels= 1:length(x), pos = 3)
+lines(x[mejor], y[mejor], col= "blue", lwd = 2)
+```
+
