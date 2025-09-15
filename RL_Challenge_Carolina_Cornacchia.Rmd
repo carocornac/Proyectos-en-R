@@ -1,0 +1,150 @@
+---
+title: "Análisis de Estudiantes"
+author: "Carolina Cornacchia"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: espresso
+    toc: true
+    toc_depth: 3
+    css: "mi_estilo.css"
+---
+## Objetivo
+
+El objetivo del análisis es identificar la relación entre distintos hábitos y características de los estudiantes (ejemplo: horas de estudio, uso de dispositivos electrónicos, empleo a tiempo parcial, sueño, etc.) y el rendimiento académico medido en las notas obtenidas.
+
+## Paso 1: Escojo un dataset
+
+Primero escojo un dataset y lo cargo en R. El que elegí es de Kaggle y tiene que datos
+acerca de los hábitos de los estudiantes y sus notas de examen:
+`<https://www.kaggle.com/datasets/jayaantanaath/student-habits-vs-academic-performance>` 
+
+```{r}
+students_data <- read.csv("C:/Users/Carol/OneDrive/Documentos/UTN/R/Regresion_lineal/student_habits_performance.csv", stringsAsFactors = FALSE)
+```
+
+Para poder ver el dataset puedo utilizar la función head: 
+
+```{r}
+head(students_data)
+```
+## Paso 2: Analísis exploratorio: Aplico funciones para conocer el dataset
+
+A su vez saco las medidas estadísticas y agrego la variable Part time job como numerica. 
+
+```{r}
+students_data$part_time_job_num <- ifelse(students_data$part_time_job == "No", 1, 0)
+head(students_data)
+summary(students_data)
+str(students_data)
+sum(is.na(students_data))
+```
+
+Se trata de un dataset que tiene **17 variables con 1000 0bservaciones**. No hay valores nulos y las únicas variables que no son numericas son:
+*student_ID*; *género*;*part_time_job*; *diet_quality*;*parental_education_level*
+
+## Paso 3: Calculo la Matriz de Correlación
+
+La **matriz de correlación** permite observar la relación lineal entre las diferentes variables consideradas en el análisis. A través de los coeficientes de correlación, se puede identificar qué variables presentan una asociación más fuerte (positiva o negativa) con las calificaciones obtenidas por los estudiantes.
+Este paso resulta fundamental para detectar patrones y posibles factores que influyen en el rendimiento académico. Además, ayuda a evitar la inclusión de variables redundantes en modelos posteriores, ya que una alta correlación entre variables puede indicar multicolinealidad.
+
+En este caso, utilizaré las variables que tengan un índice de correlación mayor a 0.5: 
+
+```{r}
+#Calculo la matriz de correlación en base a las siguientes variables
+important_columns <- students_data[, c("age", "study_hours_per_day", "social_media_hours",
+                                       "netflix_hours", "part_time_job_num", "attendance_percentage",
+                                       "sleep_hours", "exercise_frequency", "mental_health_rating",
+                                       "exam_score")] 
+
+correlation_with_exam_score <- cor(important_columns)[, "exam_score"]
+correlation_with_exam_score
+
+# Seleccionar las variables con mayor correlación absoluta con 'medv'
+selected_variables_students <- names(correlation_with_exam_score)[abs(correlation_with_exam_score) > 0.5]
+selected_variables_students
+```
+La variable a utilizar es: **Study_hours_per_day**
+
+## Paso 4: Relizar el cálculo de Regresión Lineal
+
+La regresión lineal se utilizó para evaluar en qué medida las variables explicativas influyen en la nota final de los estudiantes. Este modelo permite cuantificar el impacto de cada variable independiente sobre la variable dependiente (las calificaciones), generando una ecuación que puede ser interpretada tanto a nivel predictivo como explicativo.
+Los coeficientes del modelo muestran la dirección y magnitud de la influencia de cada factor, mientras que las métricas de ajuste (como el R²) permiten evaluar la capacidad del modelo para explicar la variabilidad en el desempeño académico.
+
+```{r}
+# Realizar la regresión lineal con las variables seleccionadas
+lm_model_students <- lm(exam_score ~ study_hours_per_day, data =students_data )
+summary(lm_model_students)
+# Obtener los coeficientes del modelo
+coefficients <- coef(lm_model_students)
+
+```
+
+En este caso podemos ver que:
+
+- En caso que hayan 0 horas de estudio, los estudiantes tendrían una nota del 36% aproximadamente
+- Esta estimación tiene un margen muy pequeño de error con un 0.7893 
+- El t value es muy significativo ya que es alto en todas las filas 
+- El p value también es significativo ya que es bajisimo 
+- Este modelo puede predecir con el 68% de exactitud
+
+## Paso 5: Construir la nueva Ecuación Lineal
+
+A partir de los datos disponibles, se calculó la ecuación de la regresión lineal que relaciona la variable dependiente (nota obtenida por el estudiante) con una o varias variables independientes.
+
+```{r}
+# Construir la ecuación del modelo en formato de texto
+equation_text <- paste("La ecuación para obtener la nota de examen es -> Exam_score =", paste0(coefficients[1], " + ", paste0(coefficients[-1], " * ", names(coefficients[-1]), collapse = " + ")))
+
+# Imprimir la ecuación de la regresión lineal
+print(equation_text)
+```
+
+```{r}
+#Hago el cálculo según la ecuación obtenida
+study_hours_per_day<- 4
+
+# Calcular la predicción
+exam_score_predicho <-35.9101620340257 + 9.49025040589682 * study_hours_per_day
+
+# Imprimir la predicción
+print(exam_score_predicho)
+```
+
+Esto significa que con 4 horas de estudio, la nota de examen será
+aproximadamente de 74%
+
+## Paso 6: Gráfico de dispersión
+
+El gráfico de dispersión permite visualizar la relación entre dos variables cuantitativas, mostrando cómo se distribuyen los datos y si existe algún patrón o tendencia entre ellas. En este análisis, se utilizó para observar como las horas de estudio se relacionan con las calificaciones obtenidas.
+
+Cada punto representa a un estudiante, y la posición en los ejes refleja los valores de las dos variables analizadas. Este tipo de gráfico es especialmente útil para:
+
+- Detectar correlaciones positivas o negativas entre variables.
+- Identificar posibles valores atípicos o extremos.
+- Obtener una primera impresión visual antes de construir modelos estadísticos como la regresión lineal.
+
+En conjunto con la matriz de correlación y el modelo de regresión, el gráfico de dispersión permite comprender mejor las relaciones entre hábitos estudiantiles y rendimiento académico.
+
+```{r}
+# Gráfico de dispersión básico
+plot(students_data$study_hours_per_day,
+     students_data$exam_score,
+     main = "Relacion entre horas de estudio y puntaje",
+     xlab = "Horas de estudio por dia",
+     ylab = "Puntaje en el examen",
+     pch = 16,    # punto sólido
+     col = "blue")
+
+# Línea de regresión
+abline(lm_model_students, col = "red", lwd = 2)
+```
+
+En este caso, el gráfico nos muestra que las variables tienen una
+relación positiva, ya que a más horas de estudio, mayor es la nota
+obtenida. La pendiente roja es muy marcada y los puntos azules la
+siguen, confirmando una relación clara y significativa.
+
+## Gracias!!
+
