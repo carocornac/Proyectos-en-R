@@ -1,0 +1,140 @@
+---
+title: "ETL Ejercicios"
+output: html_document
+date: "2025-07-10"
+---
+```{r}
+library(tidyverse)  #Administraciones de código
+library(dplyr)      #Manipular texto
+library(ggplot2)    #gráficos
+library(plotly)     #gráficos
+```
+
+```{r}
+#Cargar el dataset y ver los datos
+data("airquality")
+head(airquality)
+
+```
+```{r}
+#Estructura del dataset
+str(airquality)
+
+#Resumen estadístico
+summary(airquality)
+
+#Comprobación de valores faltantes
+sum(is.na(airquality))
+```
+```{r}
+sapply(airquality, function(x) sum(is.na(x)))
+```
+
+```{r}
+#Cambio los nombres de las columnas
+colnames(airquality) <- c("Ozono","Radiación Solar", "Viento", "Temperatura", "Mes", "Día")
+
+head(airquality)
+```
+
+
+```{r}
+#Redondeo la columna "Viento" y convierto en entero
+airquality$Viento <- as.integer(round(airquality$Viento))
+head(airquality)
+```
+
+```{r}
+#Eliminar los datos nulos
+airquality_clean <- na.omit(airquality)
+sum(is.na(airquality_clean))
+head(airquality_clean)
+```
+
+```{r}
+#Matriz de correlación
+library(corrplot)
+cor_matriz_aq <- cor(airquality_clean[,1:6])
+corrplot::corrplot(cor_matriz_aq, method = "circle")
+```
+**La mayor correlación está entre Ozono y Temperatura.**
+
+```{r}
+#Gráficos con GGally
+library(GGally)
+cor_plot_aq <- ggpairs(airquality_clean[, 1:6],
+                       upper = list(continuos= "cor"),
+                       lower = list(continuos= "smooth"),
+                       diag = list(continuos = "densityDiag"))
+cor_plot_aq
+```
+```{r}
+#Guardar el dataset transformado
+getwd()
+write.csv(airquality_clean,"airquality_caro.csv", row.names = FALSE)
+
+ggsave("Matriz_correlacion_airquality.png", plot = cor_plot_aq, width = 10, height = 10)
+```
+```{r}
+#Histograma del nivel de Ozono
+p_hist_aq <- ggplot(airquality_clean, aes( x = Ozono)) + 
+  geom_histogram(binwidth =10,fill = "steelblue", color = "white") +
+  theme_minimal () + 
+  labs (title = "Distribución del Ozono", x = "Ozono", y = "Frecuencia")
+
+#Convertir un gráfico en interactivo con plotly 
+ggplotly(p_hist_aq)
+
+```
+```{r}
+# Airquality con Temp_C
+
+airquality_clean$Temp_C <- (airquality_clean$Temperatura - 32) * 5/9
+
+# Convertir el mes a factor para que aparezca como categoría en el eje X
+airquality_clean$Mes <- factor(airquality_clean$Mes,
+                           labels = c("Mayo", "Junio", "Julio", "Agosto", "Septiembre"))
+
+# Crear el boxplot
+library(ggplot2)
+library(plotly)
+
+p_box_temp <- ggplot(airquality, aes(x = Mes, y = Temp_C, fill = Mes)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Boxplot de Temperatura (°C) por Mes",
+       x = "Mes",
+       y = "Temperatura en °C")
+
+# Hacerlo interactivo
+ggplotly(p_box_temp)
+
+```
+
+```{r}
+library(DT)
+#Ejemplo tabla interactiva
+#Redondeo la columna "Temp_C" y convierto en entero
+airquality_clean$Temp_C <- as.integer(round(airquality_clean$Temp_C))
+datatable(airquality_clean)
+```
+
+
+```{r}
+library(ggiraph)
+library(ggplot2)
+
+gg_point <- ggplot(airquality_clean, aes(x = Temp_C, y = Ozono, tooltip= rownames(airquality_clean))) + geom_point_interactive()
+
+girafe(ggobj = gg_point)
+```
+```{r}
+#install.packages("leaflet")
+library(leaflet)
+
+"Ejemplo interactivo con leaflet"
+leaflet() %>%
+  addTiles() %>%
+  addMarkers(lng = -0.1246, lat = 51.5007, popup = "Hello, London!")
+```
+
