@@ -1,0 +1,334 @@
+---
+title: "Simulación Monte Carlo - Fondo de Retiro (QQQ, SPY, US 10y)"
+author: Carolina Cornacchia - Horacio Fuentes
+date: September 05, 2025
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    toc: yes
+    md_extensions: +pipe_tables
+---
+# **Nota de Diseño**
+ - *Motor de retornos*: ANUAL (bootstrap de vectores anuales para preservar correlación).
+ - *Aportes*: mensuales, pero para simplificar los retornos aplicamos retornos anuales. Los aportes mensuales se acumulan durante el año y reciben el retorno promedio del año (no se aplica interes compuesto mensual).
+ - *Rebalanceo*: anual (al cierre de cada año).
+ - *Shocks*: eventos anuales aleatorios aplicados sobre retornos de acciones.
+ - *Costes*: porcentaje anual aplicado sobre los retornos totales (representa comisiones/impuestos).
+
+```{r, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+# **Parámetros configurables**
+
+```{r}
+RANDOM_SEED <- 12345
+set.seed(RANDOM_SEED)
+
+# Horizonte en Años
+HORIZONTE_ANIOS <- 20        # DEFINIR
+
+# Montos (USD)
+MENSUALIDAD_OBJETIVO_ACTUAL <- 2000   # MENSUALIDAD OBJETIVO en poder adquisitivo actual
+CAPITAL_INICIAL <- 0           # capital inicial (USD)
+APORTE_MENSUAL <- 1000  # aporte mensual (USD)
+CRECIMIENTO_APORTES_INFLACION <- TRUE # si los aportes crecen con la inflación
+
+# Inflación fija anual
+TASA_INFLACION_ANUAL <- 0.025
+
+# Instrumentos y tickers (se descargan datos)
+TICKER_QQQ <- "QQQ"      # Nasdaq-100 ETF
+TICKER_SPY <- "SPY"      # S&P500 ETF
+# Para el bono 10y usamos FRED serie DGS10 (10-year Treasury Constant Maturity Rate)
+TICKER_US10Y <- "DGS10"
+
+# Asignación por defecto (porcentajes)
+ASIGNACION_PORTAFOLIO <- c(QQQ = 0.3, SPY = 0.3, US10Y = 0.4)
+
+# Bootstrap y simulación
+MONTECARLO_N_SIM <- 10000
+# Shocks
+PROBABILIDAD_ANUAL_SHOCK <- 0.05
+SHOCK_PROMEDIO <- -0.30
+DESVIACION_SHOCK <- 0.10
+# Efecto sobre bonos (menor)
+SHOCK_PROMEDIO_BONOS <- -0.05
+DESVIACION_SHOCK_BONOS <- 0.05
+
+# Rebalanceo
+FRECUENCIA_REBALANCEO <- "annual" # OPCIONES: "none", "annual", "monthly" 
+
+# Costes / impuestos (aplicados sobre retornos)
+COMISION_ANUAL_BROKER <- 0.005  # 0.5% anual por defecto
+
+# Retiro: rendimiento fijo del instrumento seguro tras alcanzar objetivo
+RENDIMIENTO_FIJO_INST_RETIRO <- 0.08
+```
+
+# **Datos de rendimientos**
+
+```{r}
+# Vectores de rendimientos anuales (30 años)
+rQQQ <- c(0.38, 0.02, -0.19, 0.54, 0.09, 0.01, -0.27, 0.21, 0.32, 0.16,
+          -0.09, 0.42, 0.07, 0.12, -0.15, 0.27, 0.19, -0.08, 0.33, 0.05,
+          0.11, -0.04, 0.29, 0.21, -0.22, 0.18, 0.15, -0.06, 0.25, 0.13)
+
+rSPY <- c(0.31, 0.05, -0.11, 0.26, 0.12, -0.01, -0.23, 0.18, 0.28, 0.14,
+          -0.08, 0.21, 0.10, 0.07, -0.12, 0.24, 0.16, -0.05, 0.19, 0.09,
+          0.13, -0.03, 0.27, 0.18, -0.20, 0.12, 0.11, -0.07, 0.22, 0.15)
+
+rUS10Y <- c(0.07, 0.05, -0.02, 0.09, 0.04, 0.03, -0.01, 0.06, 0.05, 0.04,
+            0.02, 0.08, 0.03, 0.05, -0.01, 0.07, 0.04, 0.02, 0.06, 0.03,
+            0.05, 0.01, 0.04, 0.07, -0.02, 0.06, 0.05, 0.03, 0.04, 0.02)
+
+# Armado de data.frame 
+df_returns <- data.frame(
+  rQQQ = rQQQ,
+  rSPY = rSPY,
+  rUS10Y = rUS10Y
+)
+
+# Matriz de retornos
+matriz_retornos <- df_returns %>%
+  select(rQQQ, rSPY, rUS10Y) %>%
+  as.matrix()
+
+head(matriz_retornos)  # para ver que quedó correcto
+```
+
+# **Funciones de simulación**
+
+```{r}
+
+#Calcula los rendimientos de los activos en el futuro
+vectores_anuales_retornos <- function(matriz_retornos, cant_anios) {
+  # matriz_retornos: Nx3 matrix where each row = [rQQQ, rSPY, rUS10Y]
+  idx <- sample(1:nrow(matriz_retornos), size = cant_anios, replace = TRUE)
+  return(matriz_retornos[idx, , drop = FALSE])
+}
+
+# Aplicar shock aleatorio en un año dado sobre columnas de acciones y bonos
+apply_shock <- function(r_vec, p_shock, shock_promedio, desviacion_acciones, promedio_bonos, desviacion_bonos) {
+  # r_vec: vector c(rQQQ, rSPY, rUS10Y)
+  if (runif(1) < p_shock) {
+    shock_acciones <- rnorm(1, mean = shock_promedio, sd = desviacion_acciones)
+    shock_bonos <- rnorm(1, mean = promedio_bonos, sd = desviacion_bonos)
+    # Aplicamos multiplicador aditivo (ej: -0.30 hace caer 30%) => r_new = r_old + shock
+    r_vec[1] <- r_vec[1] + shock_acciones
+    r_vec[2] <- r_vec[2] + shock_acciones  # asumimos shock similar para ambas acciones
+    r_vec[3] <- r_vec[3] + shock_bonos
+  }
+  return(r_vec)
+}
+
+# Simulación de 1 trayectoria anual (HORIZONTE_ANIOS), devolviendo patrimonio final
+simulate_uno <- function(matriz_retornos, 
+                         HORIZONTE_ANIOS,
+                         CAPITAL_INICIAL,
+                         contribucion_mensual,
+                         crecimmiento_aportes_inflacion,
+                         tasa_inflacion,
+                         asignacion_portafolio,
+                         rebalance_freq,
+                         transaction_cost_pct,
+                         p_shock, shock_promedio, desviacion_acciones, promedio_bonos, desviacion_bonos) {
+  # Estado inicial
+  capital <- CAPITAL_INICIAL
+  peso_objetivos <- asignacion_portafolio / sum(asignacion_portafolio)  # vector de pesos objetivo
+  # Representamos capital por activo en valores USD (según pesos)
+  capital_activos <- capital * peso_objetivos
+  
+  contrib_mensual <- contribucion_mensual
+  
+  # Obtenemos una muestra bootstrap de vectores anuales de retornos
+  sampled_returns <- vectores_anuales_retornos(matriz_retornos, HORIZONTE_ANIOS)
+  
+  # Para cada año, aplicamos:
+  for (yr in 1:HORIZONTE_ANIOS) {
+    # 1) aplicar crecimiento de aportes por inflación si corresponde
+    if (crecimmiento_aportes_inflacion && yr > 1) {
+      contrib_mensual <- contrib_mensual * (1 + tasa_inflacion)  # crecimiento anual de aportes
+    }
+    # Sumar aportes del año al capital (simplificado: aportes mensuales suman y reciben el retorno anual promedio)
+    contrib_total_anio <- contrib_mensual * 12
+    
+    # 2) obtener retornos del año (vector)
+    r_vec <- sampled_returns[yr, ] %>% as.numeric()
+    
+    # 3) aplicar posible shock
+    r_vec <- apply_shock(r_vec, p_shock, shock_promedio, desviacion_acciones, promedio_bonos, desviacion_bonos)
+    
+    # 4) aplicar retornos a cada activo (antes de reequilibrio)
+    # capital_activos crece por (1 + return)
+    capital_activos <- capital_activos * (1 + r_vec)  # r_vec[3] ya en decimal para bonos
+    
+    # 5) añadir aportes: asumimos que los aportes se distribuyen según la asignación objetivo al inicio del año
+    # (simplificación: aportes se invierten en la misma mezcla objetivo)
+    contrib_by_activo <- contrib_total_anio * peso_objetivos
+    capital_activos <- capital_activos + contrib_by_activo
+    
+    # 6) aplicar costos/fees anuales como reducción porcentual del capital total
+    total_capital <- sum(capital_activos)
+    total_capital_dsp_costos <- total_capital * (1 - transaction_cost_pct)
+    
+    # 7) reequilibrio anual (si está activado): volver a pesos objetivo
+    if (rebalance_freq == "annual") {
+      capital_activos <- (total_capital_dsp_costos) * peso_objetivos
+    } else {
+      # si no reequilibramos, dejamos el drift (distribuimos proporcionalmente)
+      # distribuimos la reducción de costos entre activos proporcionalmente
+      capital_activos <- capital_activos / total_capital * total_capital_dsp_costos
+    }
+    # actualizamos capital
+    capital <- sum(capital_activos)
+  } # end for years
+  
+  return(capital)
+}
+```
+
+# **Ejecutar la Simulación Monte Carlo**
+
+```{r}
+
+message("Corriendo Monte Carlo con ", MONTECARLO_N_SIM, " simulaciones (Horizon = ", HORIZONTE_ANIOS, " años) ...")
+results <- numeric(MONTECARLO_N_SIM)
+
+pb <- txtProgressBar(min = 0, max = MONTECARLO_N_SIM, style = 3)
+for (i in 1:MONTECARLO_N_SIM) {
+  results[i] <- simulate_uno(
+    matriz_retornos = matriz_retornos,
+    HORIZONTE_ANIOS = HORIZONTE_ANIOS,
+    CAPITAL_INICIAL = CAPITAL_INICIAL,
+    contribucion_mensual = APORTE_MENSUAL,
+    crecimmiento_aportes_inflacion = CRECIMIENTO_APORTES_INFLACION,
+    tasa_inflacion = TASA_INFLACION_ANUAL,
+    asignacion_portafolio = ASIGNACION_PORTAFOLIO,
+    rebalance_freq = FRECUENCIA_REBALANCEO,
+    transaction_cost_pct = COMISION_ANUAL_BROKER,
+    p_shock = PROBABILIDAD_ANUAL_SHOCK,
+    shock_promedio = SHOCK_PROMEDIO,
+    desviacion_acciones = DESVIACION_SHOCK,
+    promedio_bonos = SHOCK_PROMEDIO_BONOS,
+    desviacion_bonos = DESVIACION_SHOCK_BONOS
+  )
+  setTxtProgressBar(pb, i)
+}
+close(pb)
+message("Simulaciones completadas.")
+
+
+```
+
+
+# **Evaluación del objetivo**
+
+```{r}
+
+# Target mensual en futuro considerando inflación compuesta
+MENSUALIDAD_OBJETIVO_FUTURA <- MENSUALIDAD_OBJETIVO_ACTUAL * (1 + TASA_INFLACION_ANUAL) ^ HORIZONTE_ANIOS
+# Capital requerido para sostener ese retiro con 8% anual: necesario = annual_target / yield
+REQUIRED_CAPITAL <- (MENSUALIDAD_OBJETIVO_FUTURA * 12) / RENDIMIENTO_FIJO_INST_RETIRO
+
+# KPI: probabilidad de éxito
+successes <- sum(results >= REQUIRED_CAPITAL)
+prob_success <- successes / MONTECARLO_N_SIM
+
+# Percentiles y estadísticos
+pct <- quantile(results, probs = c(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99))
+mean_final <- mean(results)
+median_final <- median(results)
+sd_final <- sd(results)
+
+# Probabilidad de ruina durante retiro (con supuestos): 
+# Bajo la regla actual, si se cumple capital >= required -> no ruina (instrumento fijo 8%).
+# Si no se cumple, podría calcularse probabilidad de que patrimonio final caiga por debajo de required (ya la tenemos).
+prob_ruina <- 1 - prob_success
+```
+
+# **Reporte resumido por consola**
+
+```{r}
+cat("\n----- Resumen Monte Carlo -----\n")
+cat("Simulaciones:", MONTECARLO_N_SIM, "\n")
+cat("Horizon (años):", HORIZONTE_ANIOS, "\n")
+cat("Target mensual (hoy): $", MENSUALIDAD_OBJETIVO_ACTUAL, "\n")
+cat("Target mensual en futuro (inflation indexed): $", round(MENSUALIDAD_OBJETIVO_FUTURA,2), "\n")
+cat("Required capital (para 8% yield): $", round(REQUIRED_CAPITAL,2), "\n\n")
+
+cat("Probabilidad de alcanzar objetivo:", scales::percent(prob_success), "\n")
+cat("Probabilidad de ruina durante retiro (approx):", scales::percent(prob_ruina), "\n\n")
+
+cat("Percentiles del patrimonio final (USD):\n")
+print(round(pct,2))
+cat("\nMedia final:", round(mean_final,2), "   Mediana final:", round(median_final,2), "   SD:", round(sd_final,2), "\n")
+```
+
+# **Gráficos simples**
+
+```{r}
+# Histograma del patrimonio final
+df_res <- data.frame(final_capital = results)
+p1 <- ggplot(df_res, aes(x = final_capital)) +
+  geom_histogram(bins = 80) +
+  geom_vline(xintercept = REQUIRED_CAPITAL, color = "red", linetype = "dashed") +
+  labs(title = "Histograma patrimonio final (Monte Carlo)",
+       subtitle = paste("Línea roja = required capital para target mensual futuro $", round(MENSUALIDAD_OBJETIVO_FUTURA,2)),
+       x = "Patrimonio final (USD)",
+       y = "Frecuencia")
+
+print(p1)
+
+# Fan-chart simplificado: construir percentiles por año usando trayectorias representativas
+# Nota: para fan chart necesitaríamos guardar trayectorias año a año para cada simulación.
+# Implementación alternativa: generar N_plot simulaciones guardando path y graficar percentiles por año.
+N_plot <- 500  # menor para fan-chart por costos
+paths_matrix <- matrix(NA, nrow = HORIZONTE_ANIOS + 1, ncol = N_plot) # fila 1 = t0
+for (j in 1:N_plot) {
+  # Simular trayectorias guardando capital por año
+  cap <- CAPITAL_INICIAL
+  peso_objetivos <- ASIGNACION_PORTAFOLIO / sum(ASIGNACION_PORTAFOLIO)
+  cap_by_asset <- cap * peso_objetivos
+  contrib_mensual <- APORTE_MENSUAL
+  sampled_returns <- vectores_anuales_retornos(matriz_retornos, HORIZONTE_ANIOS)
+  paths_matrix[1, j] <- cap
+  for (yr in 1:HORIZONTE_ANIOS) {
+    if (CRECIMIENTO_APORTES_INFLACION && yr > 1) contrib_mensual <- contrib_mensual * (1 + TASA_INFLACION_ANUAL)
+    total_contrib <- contrib_mensual * 12
+    r_vec <- sampled_returns[yr, ] %>% as.numeric()
+    r_vec <- apply_shock(r_vec, PROBABILIDAD_ANUAL_SHOCK, SHOCK_PROMEDIO, DESVIACION_SHOCK, SHOCK_PROMEDIO_BONOS, DESVIACION_SHOCK_BONOS)
+    cap_by_asset <- cap_by_asset * (1 + r_vec)
+    cap_by_asset <- cap_by_asset + total_contrib * peso_objetivos
+    total_cap <- sum(cap_by_asset)
+    total_cap_after_cost <- total_cap * (1 - COMISION_ANUAL_BROKER)
+    cap_by_asset <- (total_cap_after_cost) * peso_objetivos
+    cap <- sum(cap_by_asset)
+    paths_matrix[yr + 1, j] <- cap
+  }
+}
+
+# Calcular percentiles por año
+years_seq <- 0:HORIZONTE_ANIOS
+df_fan <- data.frame(year = years_seq,
+                     p05 = apply(paths_matrix, 1, quantile, probs = 0.05),
+                     p25 = apply(paths_matrix, 1, quantile, probs = 0.25),
+                     p50 = apply(paths_matrix, 1, quantile, probs = 0.5),
+                     p75 = apply(paths_matrix, 1, quantile, probs = 0.75),
+                     p95 = apply(paths_matrix, 1, quantile, probs = 0.95))
+
+p2 <- ggplot(df_fan, aes(x = year)) +
+  geom_ribbon(aes(ymin = p05, ymax = p95), alpha = 0.2) +
+  geom_ribbon(aes(ymin = p25, ymax = p75), alpha = 0.3) +
+  geom_line(aes(y = p50), size = 1) +
+  labs(title = "Fan chart (percentiles del patrimonio por año)",
+       x = "Años desde hoy",
+       y = "Patrimonio (USD)") +
+  geom_hline(yintercept = REQUIRED_CAPITAL, color = "red", linetype = "dashed")
+
+print(p2)
+
+```
+
